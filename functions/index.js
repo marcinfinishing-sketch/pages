@@ -1,46 +1,64 @@
-export async function onRequest(context) {
-  const host = (context.request.headers.get("host") || "").toLowerCase();
-  const assetPath = `/content/${host}.json`;
+export async function onRequestGet(context) {
+  const { request, env } = context;
+  const host = (request.headers.get("host") || "").toLowerCase().split(":")[0];
 
-  async function getJson(path) {
-    const r = await context.env.ASSETS.fetch(new Request(new URL(path, context.request.url)));
-    if (!r.ok) return null;
-    return await r.json();
+  // wybieramy JSON per domena, a jak nie ma - fallback
+  const candidatePaths = [
+    `/content/${host}.json`,
+    `/content/_default.json`
+  ];
+
+  let data = null;
+
+  for (const p of candidatePaths) {
+    const assetRes = await env.ASSETS.fetch(new Request(new URL(p, request.url)));
+    if (assetRes.ok) {
+      try {
+        data = await assetRes.json();
+        break;
+      } catch {}
+    }
   }
 
-  const data =
-    (await getJson(assetPath)) ||
-    (await getJson("/content/_default.json")) || {
-      title: host,
-      seoTitle: host,
-      bodyHtml: "<p>Coming soon.</p>",
-      description: "Coming soon"
-    };
+  if (!data) {
+    return new Response("No content found.", { status: 404 });
+  }
 
-  const title = data.seoTitle || data.title || host;
-  const h1 = data.title || host;
-  const desc = data.description || "";
+  const seoTitle = escapeHtml(data.seoTitle || data.title || host);
+  const title = escapeHtml(data.title || host);
+  const desc = escapeHtml(data.description || "");
+  const bodyHtml = data.bodyHtml || "";
+  const footerHtml = data.footerHtml || "";
 
   const html = `<!doctype html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${title}</title>
-<meta name="description" content="${desc}"/>
-<style>
-body{font-family:system-ui;margin:40px}
-h1{font-size:40px}
-article{font-size:18px;line-height:1.6}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>${seoTitle}</title>
+  <meta name="description" content="${desc}" />
 </head>
 <body>
-<h1>${h1}</h1>
-<article>${data.bodyHtml || ""}</article>
+  <main style="max-width:900px;margin:40px auto;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;padding:0 16px;">
+    <h1>${title}</h1>
+    ${desc ? `<p>${desc}</p>` : ""}
+    <hr />
+    <section>${bodyHtml}</section>
+    ${footerHtml ? `<hr /><footer>${footerHtml}</footer>` : ""}
+  </main>
 </body>
 </html>`;
 
   return new Response(html, {
     headers: { "content-type": "text/html; charset=utf-8" }
   });
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
